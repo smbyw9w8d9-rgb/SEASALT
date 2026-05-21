@@ -1,0 +1,381 @@
+# Simple workflow for deploying static content to GitHub Pages
+name: Deploy static content to Pages
+
+on:
+  # Runs on pushes targeting the default branch
+  push:
+    branches: ["main"]
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
+# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  # Single deploy job since we're just deploying
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # Upload entire repository
+          path: '.'
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>智能错题本 · 英语阅读错因自诊系统</title>
+    <style>
+        body { font-family: "Microsoft YaHei", sans-serif; margin: 20px; background: #f7f9fc; }
+        .container { max-width: 900px; margin: auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1, h2, h3 { color: #2c3e50; }
+        .problem { margin: 20px 0; padding: 15px; background: #f8f9fa; border-radius: 8px; }
+        .answer-btn { padding: 8px 16px; margin: 6px; cursor: pointer; border: 1px solid #ccc; border-radius: 6px; background: white; }
+        .answer-btn:hover { background: #eef; }
+        .answer-btn.selected { background: #d1e7dd; border-color: #198754; }
+        .thought-item { margin: 6px 0; }
+        button { padding: 10px 20px; margin: 10px 5px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; }
+        .btn-primary { background: #0d6efd; color: white; }
+        .btn-success { background: #198754; color: white; }
+        .btn-warning { background: #fd7e14; color: white; }
+        .btn-info { background: #0dcaf0; color: black; }
+        .tips { color: #666; font-size: 14px; margin: 10px 0; }
+        .result-correct { color: #198754; font-weight: bold; font-size: 16px; }
+        .result-wrong { color: #dc3545; font-weight: bold; font-size: 16px; }
+        .cause-item { margin: 5px 0; padding: 6px; background: #fff3cd; border-radius: 4px; }
+        .stat-bar { background: #0d6efd; height: 12px; display: inline-block; margin-left: 10px; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>📚 英语阅读错因自诊系统（网页版）</h1>
+    <p>智能错题本 · 三例题全预设版（含多错因选择与考前速记）</p>
+
+    <div id="menu">
+        <h3>请选择题号：</h3>
+        <button class="btn-primary" onclick="startProblem(0)">1. Tom迟到题（记叙文·原因题）</button>
+        <button class="btn-primary" onclick="startProblem(1)">2. 沙漠植物题（说明文·主旨题）</button>
+        <button class="btn-primary" onclick="startProblem(2)">3. 社交媒体题（议论文·细节题）</button>
+        <hr>
+        <button class="btn-info" onclick="showStats()">查看错题统计</button>
+        <button class="btn-warning" onclick="showMemory()">考前速记提示</button>
+    </div>
+
+    <div id="problem-area" style="display:none;">
+        <div id="problem-content"></div>
+        <div id="answer-section"></div>
+        <div id="thought-section" style="display:none;"></div>
+        <div id="result-section"></div>
+        <div id="action-buttons">
+            <button class="btn-primary" onclick="backToMenu()">返回菜单</button>
+        </div>
+    </div>
+
+    <div id="stats-area" style="display:none;">
+        <h3>📊 错题统计</h3>
+        <div id="stats-content"></div>
+        <button class="btn-primary" onclick="backToMenu()">返回</button>
+    </div>
+</div>
+
+<script>
+const ERROR_CATEGORIES = {
+    "1": {"name": "主旨大意错误", "sub": {"1": "以偏概全", "2": "偏离中心思想", "3": "内容/主旨混淆"}},
+    "2": {"name": "细节理解错误", "sub": {"1": "定位错误", "2": "信息曲解", "3": "忽略否定词/限定词"}},
+    "3": {"name": "推理判断错误", "sub": {"1": "过度推理", "2": "推理不足", "3": "脱离原文主观臆断"}},
+    "4": {"name": "因果关系混淆", "sub": {"1": "倒置因果", "2": "忽略根本原因", "3": "强加因果"}},
+    "5": {"name": "词汇理解错误", "sub": {"1": "词义猜测脱离上下文", "2": "熟词生义未识别", "3": "指代关系混淆"}},
+    "6": {"name": "观点态度错误", "sub": {"1": "作者态度判断错误", "2": "人物观点张冠李戴"}}
+};
+
+const CAUSE_MEMORY_TIPS = {
+    "1,1": "主旨题以偏概全：别只看例子忘概括，考前提醒自己先找主题句。",
+    "1,2": "主旨题偏离中心：别被次要信息带偏，注意首尾句和转折词。",
+    "1,3": "主旨题内容/主旨混淆：内容常有例子，但主旨需涵盖全文。",
+    "2,1": "细节定位错误：用题干关键词扫描原文，注意同义替换。",
+    "2,2": "信息曲解：理解句子务必逐词对照原文。",
+    "2,3": "忽略否定词：NOT/EXCEPT/only 等词做题时圈出来。",
+    "3,1": "过度推理：不要我觉得，要作者觉得。",
+    "3,2": "推理不足：别只看表面，需挖掘隐含逻辑。",
+    "3,3": "主观臆断：每个选项都要找到原文证据！",
+    "4,1": "倒置因果：注意because/so指向，别把结果当原因。",
+    "4,2": "忽略根本原因：多问为什么，追溯核心诱因。",
+    "4,3": "强加因果：两件事无关联不要硬绑定。",
+    "5,1": "词义猜测：必须看前后句线索。",
+    "5,2": "熟词生义：常见词在文中可能是特殊含义。",
+    "5,3": "指代关系：it/this 指什么必须理清。",
+    "6,1": "作者态度：不要把人物观点当作者态度。",
+    "6,2": "人物观点：小心张冠李戴，标上人名。"
+};
+
+const PROBLEMS = [
+{
+    "name": "Tom迟到题（记叙文·原因题）",
+    "text": "Tom was late for school because his alarm clock didn't ring. He ran to the bus stop, but the bus had already left. So he had to walk. When he finally arrived, the first class was over.\n\nQuestion: Why was Tom late for school?",
+    "answers": ["He missed the bus.","His alarm clock didn't ring.","He walked to school.","The first class was over."],
+    "answer_thoughts": {
+        0:["只看到表面事件，直接把中间发生的事当作迟到根本原因","未梳理因果链，凭日常常识主观判断答案"],
+        1:["定位because因果信号词，直接锁定原文根本原因","梳理事件先后，区分直接事件与核心诱因"],
+        2:["混淆因果逻辑，误将结果当作产生迟到的原因","被后半段细节干扰，忽略题干核心提问方向"],
+        3:["未理清事件时序，把迟到带来的结果当成原因","扫读不细致，抓尾句信息忽略前文因果逻辑"]
+    },
+    "thought_to_cause": {
+        "0,0":[["4","2","只看中间事件，忽略原文根本原因"]],
+        "0,1":[["3","3","脱离原文，凭常识主观臆断因果"]],
+        "2,0":[["4","3","强加因果，混淆结果与原因"]],
+        "2,1":[["1","2","偏离核心，被次要细节带偏"]],
+        "3,0":[["2","2","信息曲解，颠倒事件因果时序"]],
+        "3,1":[["3","2","推理不足，未挖掘深层逻辑关系"]]
+    },
+    "right_thought":{1:[0,1]},
+    "thought_cause":{0:["4","2","思维停留在中间事件，未追溯到根本原因"],1:null,2:null},
+    "ref_steps":["1. 定位问题焦点：迟到的原因","2. 扫读全文寻找因果信号词 (because, so)","3. 发现首句 'because his alarm clock didn't ring'","4. 识别 'missed the bus' 是中间结果，非根本原因","5. 理清因果链：闹钟没响 → 错过公交 → 走路 → 迟到","6. 得出结论：根本原因是闹钟没响"],
+    "correct":1
+},
+{
+    "name": "沙漠植物题（说明文·主旨题）",
+    "text": "Plants in the desert have developed amazing ways to survive. Cacti turn their leaves into spines to reduce water loss. The roots of camel thorn trees can grow as deep as 30 meters to find underground water. Some plants drop their leaves during dry seasons and remain dormant until rain returns. These adaptations allow them to live in extreme environments.\n\nQuestion: What is the main idea of the passage?",
+    "answers": ["Desert plants have special ways to survive.","Cacti have spines to reduce water loss.","Some plants drop their leaves in dry seasons.","Desert environments are very harsh."],
+    "answer_thoughts": {
+        0:["快速识别首尾主题句，概括全文核心","区分主旨与举例细节，不被局部信息干扰"],
+        1:["被文中典型例子吸引，误将细节当作全文主旨","不会区分例证与中心，缺乏整体概括意识"],
+        2:["凭印象抓取局部信息，以单个细节概括全文","未定位主题句，碎片化理解文章内容"],
+        3:["误判文章描述主体，偏离植物适应的核心话题","过度放大次要信息，主观臆断写作目的"]
+    },
+    "thought_to_cause": {
+        "1,0":[["1","1","以偏概全，把例子当作主旨"]],
+        "1,1":[["1","2","偏离中心，缺乏整体概括能力"]],
+        "2,0":[["1","1","局部代替整体，以偏概全"]],
+        "2,1":[["2","1","定位错误，未查找主题句"]],
+        "3,0":[["1","2","偏离文章核心描述主体"]],
+        "3,1":[["3","3","脱离原文，主观臆断主题"]]
+    },
+    "right_thought":{0:[0,1]},
+    "thought_cause":{0:null,1:["1","1","以偏概全，把例子当成主旨"],2:["3","2","推理不足，未识别主题句"]},
+    "ref_steps":["1. 阅读首尾句，寻找主题句","2. 识别文章结构：主题句 + 例子支撑","3. 确认第一句为全文中心","4. 判断选项A概括全部，其余为细节","5. 选择A"],
+    "correct":0
+},
+{
+    "name": "社交媒体题（议论文·细节题）",
+    "text": "Social media has changed the way teenagers communicate. While it helps them stay connected with friends, it also brings problems. Studies show that spending too much time on social media can lead to anxiety and sleep loss. However, not all effects are negative. Many teens use platforms to share creative work and find support communities. Experts suggest that the key is balanced use: limiting screen time and focusing on real-life interactions.\n\nQuestion: According to the passage, which of the following is NOT mentioned as a positive effect of social media?",
+    "answers": ["Staying connected with friends.","Sharing creative work.","Finding support communities.","Improving academic performance."],
+    "answer_thoughts": {
+        0:["忽略题干NOT限定词，只匹配原文正向信息","审题不完整，未关注题干特殊提问要求"],
+        1:["识别选项为原文正面信息，忽略题目选未提及项","未做反向排除，只做正向细节匹配"],
+        2:["精准定位原文，但忘记反向筛选NOT要求","细节核对正确，审题逻辑出现偏差"],
+        3:["标记NOT关键词，逐项反向排除原文信息","严谨审题，精准核对选项与题干要求"]
+    },
+    "thought_to_cause": {
+        "0,0":[["2","3","忽略NOT否定限定，审题失误"]],
+        "0,1":[["2","3","审题不全，忽略题干特殊要求"]],
+        "1,0":[["2","3","忽略否定词，未做反向筛选"]],
+        "1,1":[["3","2","推理不足，只做正向匹配"]],
+        "2,0":[["2","3","审题偏差，忘记反向筛选"]],
+        "2,1":[["3","2","细节核对正确，逻辑推理不足"]]
+    },
+    "right_thought":{3:[0,1]},
+    "thought_cause":{0:["2","3","忽略题干否定词，审题失误"],1:["2","3","忽略NOT，审题不严谨"],2:["2","3","审题偏差，忽略限定条件"],3:null},
+    "ref_steps":["1. 审题：选NOT mentioned的positive effect","2. 定位原文：stay connected, share work, find communities","3. 比对选项，D未提及","4. 确认A/B/C均为原文细节","5. 选择D"],
+    "correct":3
+}
+];
+
+let stats = {};
+let currentProblem = null;
+let currentAnsIdx = -1;
+let selectedThoughts = [];
+
+function $(id) { return document.getElementById(id); }
+
+function startProblem(idx) {
+    currentProblem = PROBLEMS[idx];
+    currentAnsIdx = -1;
+    selectedThoughts = [];
+    $("menu").style.display = "none";
+    $("stats-area").style.display = "none";
+    $("problem-area").style.display = "block";
+    $("result-section").innerHTML = "";
+    $("thought-section").style.display = "none";
+
+    let html = `<h2>${currentProblem.name}</h2><div class="problem"><pre>${currentProblem.text}</pre></div>`;
+    $("problem-content").innerHTML = html;
+
+    let ansHtml = "<h3>✏️ 请选择你的答案：</h3>";
+    for (let i=0; i<currentProblem.answers.length; i++) {
+        ansHtml += `<button class="answer-btn" onclick="selectAnswer(${i})">${currentProblem.answers[i]}</button>`;
+    }
+    $("answer-section").innerHTML = ansHtml;
+}
+
+function selectAnswer(idx) {
+    currentAnsIdx = idx;
+    let btns = document.querySelectorAll(".answer-btn");
+    btns.forEach(b => b.classList.remove("selected"));
+    btns[idx].classList.add("selected");
+
+    setTimeout(() => showThoughts(), 300);
+}
+
+function showThoughts() {
+    let thoughts = currentProblem.answer_thoughts[currentAnsIdx];
+    let html = `<h3>💭 请选择你的思考过程（可多选）</h3><p class="tips">可多选，点击勾选/取消</p>`;
+    for (let i=0; i<thoughts.length; i++) {
+        html += `<div class="thought-item"><input type="checkbox" id="t${i}" onclick="toggleThought(${i})"> <label for="t${i}">${thoughts[i]}</label></div>`;
+    }
+    html += `<br><button class="btn-success" onclick="submitThought()">确认提交思路</button>`;
+    $("thought-section").innerHTML = html;
+    $("thought-section").style.display = "block";
+}
+
+function toggleThought(idx) {
+    let chk = document.getElementById(`t${idx}`).checked;
+    if (chk) {
+        if (!selectedThoughts.includes(idx)) selectedThoughts.push(idx);
+    } else {
+        selectedThoughts = selectedThoughts.filter(x => x !== idx);
+    }
+}
+
+function submitThought() {
+    let res = "";
+    let correct = currentProblem.correct;
+
+    if (currentAnsIdx === correct) {
+        let rightSet = new Set(currentProblem.right_thought[correct] || []);
+        let allRight = selectedThoughts.every(t => rightSet.has(t));
+        if (allRight) {
+            res += `<p class="result-correct">✅ 答案正确！思路完全正确！</p>`;
+        } else {
+            res += `<p class="result-correct">✅ 答案正确，但部分思考存在偏差</p>`;
+            let causes = [];
+            for (let t of selectedThoughts) {
+                let c = currentProblem.thought_cause[t];
+                if (c) {
+                    let name = `${ERROR_CATEGORIES[c[0]].name} - ${ERROR_CATEGORIES[c[0]].sub[c[1]]}`;
+                    res += `<div class="cause-item">⚠️ ${c[2]} (${name})</div>`;
+                    causes.push([c[0], c[1]]);
+                }
+            }
+            if (causes.length > 0) {
+                res += `<button class="btn-warning" onclick="recordCauses(${JSON.stringify(causes)})">记录这些错因</button>`;
+            }
+        }
+    } else {
+        res += `<p class="result-wrong">❌ 答案不正确</p>`;
+        let causeMap = {};
+        for (let t of selectedThoughts) {
+            let key = `${currentAnsIdx},${t}`;
+            let list = currentProblem.thought_to_cause[key] || [];
+            for (let c of list) {
+                let k = c[0]+","+c[1];
+                causeMap[k] = c;
+            }
+        }
+        let causes = Object.values(causeMap);
+        if (causes.length > 0) {
+            res += `<h4>🤖 匹配到错因（可勾选记录）：</h4>`;
+            for (let i=0; i<causes.length; i++) {
+                let c = causes[i];
+                let name = `${ERROR_CATEGORIES[c[0]].name} - ${ERROR_CATEGORIES[c[0]].sub[c[1]]}`;
+                res += `<div class="cause-item"><input type="checkbox" id="c${i}"> <label for="c${i}">${c[2]} (${name})</label></div>`;
+            }
+            res += `<br><button class="btn-warning" onclick="saveSelectedCauses(${JSON.stringify(causes)})">确认记录选中错因</button>`;
+        }
+    }
+
+    res += `<h4>📝 参考思维路径：</h4><ul>`;
+    for (let s of currentProblem.ref_steps) res += `<li>${s}</li>`;
+    res += `</ul><p class="tips">💡 请反思思维差异</p>`;
+    $("result-section").innerHTML = res;
+}
+
+function recordCauses(causes) {
+    for (let [cat, sub] of causes) {
+        let key = `${ERROR_CATEGORIES[cat].name} - ${ERROR_CATEGORIES[cat].sub[sub]}`;
+        stats[key] = (stats[key] || 0) + 1;
+    }
+    alert("✅ 错因已记录！");
+}
+
+function saveSelectedCauses(allCauses) {
+    let selected = [];
+    for (let i=0; i<allCauses.length; i++) {
+        if (document.getElementById(`c${i}`).checked) {
+            selected.push(allCauses[i]);
+        }
+    }
+    recordCauses(selected.map(c => [c[0], c[1]]));
+}
+
+function showStats() {
+    $("menu").style.display = "none";
+    $("problem-area").style.display = "none";
+    let area = $("stats-area");
+    area.style.display = "block";
+
+    let arr = [];
+    for (let k in stats) arr.push([k, stats[k]]);
+    arr.sort((a,b) => b[1]-a[1]);
+
+    let html = "";
+    let total = 0;
+    for (let [k, v] of arr) {
+        total += v;
+        html += `<p>${k}：${v}次 <span class="stat-bar" style="width:${v*10}px"></span></p>`;
+    }
+    html += `<p>总计错误：${total} 次</p>`;
+    $("stats-content").innerHTML = html;
+}
+
+function showMemory() {
+    let arr = [];
+    for (let k in stats) arr.push([k, stats[k]]);
+    if (arr.length === 0) { alert("暂无错题记录"); return; }
+
+    let msg = "🧠 考前速记提示：\n\n";
+    for (let [key, cnt] of arr) {
+        let [catName, subName] = key.split(" - ");
+        let catKey = null, subKey = null;
+        for (let ck in ERROR_CATEGORIES) {
+            if (ERROR_CATEGORIES[ck].name === catName) {
+                catKey = ck;
+                for (let sk in ERROR_CATEGORIES[ck].sub) {
+                    if (ERROR_CATEGORIES[ck].sub[sk] === subName) subKey = sk;
+                }
+            }
+        }
+        let tip = CAUSE_MEMORY_TIPS[`${catKey},${subKey}`] || "无提示";
+        msg += `【${key}】(${cnt}次)\n${tip}\n\n`;
+    }
+    alert(msg);
+}
+
+function backToMenu() {
+    $("problem-area").style.display = "none";
+    $("stats-area").style.display = "none";
+    $("menu").style.display = "block";
+}
+</script>
+</body>
+</html>
